@@ -27,6 +27,27 @@ const (
 	SocketStatusLooping = SocketStatus(101)
 )
 
+func (s SocketStatus) String() string {
+	switch s {
+	case SocketStatusIdle:
+		return "idle"
+	case SocketStatusStarSelected:
+		return "star selected"
+	case SocketStatusCalibrating:
+		return "calibrating"
+	case SocketStatusGuiding:
+		return "guiding"
+	case SocketStatusStarLost:
+		return "star lost"
+	case SocketStatusPaused:
+		return "paused"
+	case SocketStatusLooping:
+		return "looping"
+	}
+
+	return "unknown"
+}
+
 // SocketDitherAmount is the amount to dither by.
 type SocketDitherAmount byte
 
@@ -383,7 +404,7 @@ func (c *SocketClient) AutoFindStar() (bool, error) {
 		return false, errors.New("unexpected response")
 	}
 
-	if resp[0] == 0 {
+	if resp[0] == 1 {
 		return true, nil
 	}
 
