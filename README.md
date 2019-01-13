@@ -1,5 +1,8 @@
 # github.com/goastro/phd2
 
+[![GoDoc](https://godoc.org/github.com/goastro/phd2?status.svg)](https://godoc.org/github.com/goastro/phd2)
+
+
 ## Overview
 
 Package phd2 is used to control a running
