@@ -96,18 +96,8 @@ func (c *RPCClient) processReadLoop() {
 			continue
 		}
 
-		var resp interface{}
-
-		switch evt.Event {
-		case "Version":
-			resp = &Version{}
-		case "CalibrationComplete":
-			resp = &CalibrationComplete{}
-		case "Paused":
-			resp = &Paused{}
-		case "AppState":
-			resp = &AppState{}
-		default:
+		resp, ok := getEvent(evt.Event)
+		if !ok {
 			if len(evt.Event) == 0 {
 				c.methodResponse <- line
 			} else {
