@@ -343,6 +343,7 @@ func (c *RPCClient) call(name string, params []interface{}, resp interface{}) er
 }
 
 // https://github.com/OpenPHDGuiding/phd2/wiki/EventMonitoring#available-methods
+// https://github.com/OpenPHDGuiding/phd2/blob/master/event_server.cpp
 
 func (c *RPCClient) GetExposure() (int, error) {
 	var resp IntResponse
