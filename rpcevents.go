@@ -1,5 +1,7 @@
 package phd2
 
+// https://github.com/OpenPHDGuiding/phd2/wiki/EventMonitoring#event-notification-messages
+
 func getEvent(name string) (interface{}, bool) {
 	switch name {
 	case "Version":

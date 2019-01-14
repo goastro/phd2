@@ -10,6 +10,7 @@ import (
 	"github.com/pkg/errors"
 )
 
+// RPCClient is the full featured client to use for interfacing with PHD2.
 type RPCClient struct {
 	d    Dialer
 	conn net.Conn
@@ -25,18 +26,21 @@ type RPCClient struct {
 	events chan []byte
 }
 
+// NewRPCClient creates a new RPCClient.
 func NewRPCClient(d Dialer) *RPCClient {
 	return &RPCClient{
 		d: d,
 	}
 }
 
+// Connect connects to the PHD2 RPC server at the given host and port. This is
+// normally port 4400, 4401, etc.
 func (c *RPCClient) Connect(host string, port int) error {
 	var err error
 
 	c.conn, err = c.d.Dial("tcp", fmt.Sprintf("%s:%d", host, port))
 	if err != nil {
-		return err
+		return errors.Wrap(err, "error connecting to phd2")
 	}
 
 	c.events = make(chan []byte, 10)
@@ -51,6 +55,23 @@ func (c *RPCClient) Connect(host string, port int) error {
 	return nil
 }
 
+// Close disconnects from the PHD2 RPC server.
+func (c *RPCClient) Close() error {
+	err := c.conn.Close()
+	if err != nil {
+		return errors.Wrap(err, "error closing connection")
+	}
+
+	c.conn = nil
+	close(c.events)
+	close(c.methodResponse)
+
+	c.reader = nil
+	c.writer = nil
+
+	return nil
+}
+
 func (c *RPCClient) readLoop() {
 	var line []byte
 	var partial bool
@@ -61,6 +82,7 @@ func (c *RPCClient) readLoop() {
 
 		bytes, partial, err = c.reader.ReadLine()
 		if err != nil {
+			// TODO: Handle errors properly.
 			println(err.Error())
 			return
 		}
@@ -79,6 +101,7 @@ func (c *RPCClient) processReadLoop() {
 		var evt Event
 		err := json.Unmarshal(line, &evt)
 		if err != nil {
+			// TODO: Handle errors properly.
 			println(err.Error())
 			continue
 		}
@@ -88,6 +111,7 @@ func (c *RPCClient) processReadLoop() {
 			if len(evt.Event) == 0 {
 				c.methodResponse <- line
 			} else {
+				// TODO: Handle errors properly.
 				println(fmt.Sprintf("unknown event: %s", line))
 			}
 			continue
@@ -95,11 +119,10 @@ func (c *RPCClient) processReadLoop() {
 
 		err = json.Unmarshal([]byte(line), resp)
 		if err != nil {
+			// TODO: Handle errors properly.
 			println(err.Error())
 			continue
 		}
-
-		println(fmt.Sprintf("%#v", resp))
 	}
 }
 
