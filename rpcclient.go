@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"sync"
 )
 
 type RPCClient struct {
@@ -13,6 +14,11 @@ type RPCClient struct {
 
 	reader *bufio.Reader
 	writer *bufio.Writer
+
+	// Ensures only one RPC method call is active at a time.
+	methodMutex    sync.Mutex
+	methodResponse chan string
+	requestID      int
 
 	events chan string
 }
@@ -32,6 +38,7 @@ func (c *RPCClient) Connect(host string, port int) error {
 	}
 
 	c.events = make(chan string, 10)
+	c.methodResponse = make(chan string, 1)
 
 	c.reader = bufio.NewReader(c.conn)
 	c.writer = bufio.NewWriter(c.conn)
@@ -60,6 +67,7 @@ func (c *RPCClient) readLoop() {
 		line = existingLine + string(bytes)
 
 		if !partial {
+			println(line)
 			c.events <- line
 			line = ""
 		}
@@ -221,16 +229,28 @@ type RPCResponse struct {
 	Error RPCError `json:"error,omitempty"`
 }
 
-type CaptureSingleFrameResponse struct {
+type EmptyResponse struct {
 	RPCResponse
 }
 
-type ClearCalibrationResponse struct {
+type StringResponse struct {
 	RPCResponse
+	Result string `json:"result"`
 }
 
-type DitherResponse struct {
+type IntResponse struct {
 	RPCResponse
+	Result int `json:"result"`
+}
+
+type BooleanResponse struct {
+	RPCResponse
+	Result bool `json:"result"`
+}
+
+type FloatSliceResponse struct {
+	RPCResponse
+	Result []float64 `json:"result"`
 }
 
 func (c *RPCClient) processReadLoop() {
@@ -254,7 +274,12 @@ func (c *RPCClient) processReadLoop() {
 		case "AppState":
 			resp = &AppState{}
 		default:
-			println(fmt.Sprintf("uknown event: %s", line))
+			if len(evt.Event) == 0 {
+				c.methodResponse <- line
+			} else {
+				println(fmt.Sprintf("unknown event: %s", line))
+			}
+			continue
 		}
 
 		err = json.Unmarshal([]byte(line), resp)
@@ -265,4 +290,284 @@ func (c *RPCClient) processReadLoop() {
 
 		println(fmt.Sprintf("%#v", resp))
 	}
+}
+
+type RPCRequest struct {
+	Method string        `json:"method"`
+	ID     int           `json:"id"`
+	Params []interface{} `json:"params,omitempty"`
+}
+
+func (c *RPCClient) call(name string, params []interface{}, resp interface{}) error {
+	c.methodMutex.Lock()
+	defer c.methodMutex.Unlock()
+
+	c.requestID++
+
+	req := RPCRequest{
+		Method: name,
+		ID:     c.requestID,
+		Params: params,
+	}
+
+	bytes, err := json.Marshal(&req)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.writer.Write(bytes)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.writer.WriteString("\r\n")
+	if err != nil {
+		return err
+	}
+
+	err = c.writer.Flush()
+	if err != nil {
+		return err
+	}
+
+	line := <-c.methodResponse
+
+	println(line)
+
+	err = json.Unmarshal([]byte(line), &resp)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// https://github.com/OpenPHDGuiding/phd2/wiki/EventMonitoring#available-methods
+
+func (c *RPCClient) GetExposure() (int, error) {
+	var resp IntResponse
+	err := c.call("get_exposure", nil, &resp)
+	if err != nil {
+		return 0, err
+	}
+
+	return resp.Result, nil
+}
+
+func (c *RPCClient) CaptureSingleFrame(duration int, subframe []int) error {
+	var resp IntResponse
+	err := c.call("capture_single_frame", []interface{}{duration, subframe}, &resp)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *RPCClient) ClearCalibration(which string) error {
+	var resp IntResponse
+	err := c.call("clear_calibration", []interface{}{which}, &resp)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type Settle struct {
+	Pixels         float64 `json:"pixels"`
+	TimeSeconds    int     `json:"time"`
+	TimeoutSeconds int     `json:"timeout"`
+}
+
+func (c *RPCClient) Dither(pixels float64, raOnly bool, settle Settle) error {
+	var resp IntResponse
+	err := c.call("dither", []interface{}{pixels, raOnly, settle}, &resp)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *RPCClient) FindStar() ([]float64, error) {
+	var resp FloatSliceResponse
+	err := c.call("find_star", nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp.Result, nil
+}
+
+func (c *RPCClient) FlipCalibration() error {
+	var resp IntResponse
+	err := c.call("flip_calibration", nil, &resp)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *RPCClient) GetAppState() (string, error) {
+	var resp StringResponse
+	err := c.call("get_app_state", nil, &resp)
+	if err != nil {
+		return "", err
+	}
+
+	return resp.Result, nil
+}
+
+func (c *RPCClient) GetCalibrated() (bool, error) {
+	var resp BooleanResponse
+	err := c.call("get_calibrated", nil, &resp)
+	if err != nil {
+		return false, err
+	}
+
+	return resp.Result, nil
+}
+
+func (c *RPCClient) GetConnected() (bool, error) {
+	var resp BooleanResponse
+	err := c.call("get_connected", nil, &resp)
+	if err != nil {
+		return false, err
+	}
+
+	return resp.Result, nil
+}
+
+func (c *RPCClient) GetAlgorithmParamNames(axis string) ([]string, error) {
+	return nil, ErrNotImplemented
+}
+
+func (c *RPCClient) GetAlgorithmParam(axis, param string) (string, error) {
+	return "", ErrNotImplemented
+}
+
+func (c *RPCClient) GetCalibrationData(which string) error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) GetCoolerStatus() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) GetCurrentEquipment() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) GetDecGuidMode() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) GetExposureDurations() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) GetLockPosition() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) GetLockShiftEnabled() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) GetLockShiftParams() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) GetPaused() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) GetPixelScale() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) GetProfile() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) GetProfiles() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) GetSearchRegion() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) GetSensorTemperature() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) GetStarImage() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) GetUseSubframes() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) Guide() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) GuidePulse() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) Loop() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) SaveImage() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) SetAlgorithmParam() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) SetConnected() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) SetDecGuideMode() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) SetExposure() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) SetLockPosition() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) SetLockShiftEnabled() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) SetLockShiftParams() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) SetPaused() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) SetProfile() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) Shutdown() error {
+	return ErrNotImplemented
+}
+
+func (c *RPCClient) StopCapture() error {
+	return ErrNotImplemented
 }
