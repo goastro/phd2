@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"image"
 	"net"
 	"sync"
 
@@ -425,8 +426,45 @@ func (c *RPCClient) GetSensorTemperature() (float64, error) {
 	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
-func (c *RPCClient) GetStarImage() error {
-	return ErrNotImplemented
+type StarPosition struct {
+	X int `json:"X"`
+	Y int `json:"Y"`
+}
+
+type StarImage struct {
+	Frame   int          `json:"frame"`
+	Width   int          `json:"width"`
+	Height  int          `json:"height"`
+	StarPos StarPosition `json:"star_pos"`
+	Pixels  string       `json:"pixels"`
+	Image   image.Image
+}
+
+func (c *RPCClient) GetStarImage(maxSize int) (StarImage, error) {
+	var result StarImage
+
+	var params []interface{}
+
+	if maxSize > 0 {
+		params = []interface{}{maxSize}
+	}
+
+	_, err := c.call("get_star_image", params, &result)
+	if err != nil {
+		return result, errors.Wrap(err, "error calling jsonrpc method")
+	}
+
+	return result, nil
+	/*
+		bytes, err := base64.RawStdEncoding.DecodeString(result.Pixels)
+		if err != nil {
+			return result, errors.Wrap(err, "error decoding image pixels")
+		}
+
+		// TODO: Turn bytes into an image object.
+
+		return result, nil
+	*/
 }
 
 func (c *RPCClient) GetUseSubframes() (bool, error) {
