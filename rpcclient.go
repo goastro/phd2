@@ -19,10 +19,10 @@ type RPCClient struct {
 
 	// Ensures only one RPC method call is active at a time.
 	methodMutex    sync.Mutex
-	methodResponse chan string
+	methodResponse chan []byte
 	requestID      int
 
-	events chan string
+	events chan []byte
 }
 
 func NewRPCClient(d Dialer) *RPCClient {
@@ -39,8 +39,8 @@ func (c *RPCClient) Connect(host string, port int) error {
 		return err
 	}
 
-	c.events = make(chan string, 10)
-	c.methodResponse = make(chan string, 1)
+	c.events = make(chan []byte, 10)
+	c.methodResponse = make(chan []byte, 1)
 
 	c.reader = bufio.NewReader(c.conn)
 	c.writer = bufio.NewWriter(c.conn)
@@ -52,12 +52,11 @@ func (c *RPCClient) Connect(host string, port int) error {
 }
 
 func (c *RPCClient) readLoop() {
-	var line string
+	var line []byte
 	var partial bool
 	var err error
 
 	for {
-		existingLine := line
 		var bytes []byte
 
 		bytes, partial, err = c.reader.ReadLine()
@@ -66,31 +65,19 @@ func (c *RPCClient) readLoop() {
 			return
 		}
 
-		line = existingLine + string(bytes)
+		line = append(line, bytes...)
 
 		if !partial {
-			println(line)
 			c.events <- line
-			line = ""
+			line = nil
 		}
 	}
-}
-
-type RPCError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-type RPCResponse struct {
-	ID     int             `json:"id"`
-	Error  RPCError        `json:"error,omitempty"`
-	Result json.RawMessage `json:"result"`
 }
 
 func (c *RPCClient) processReadLoop() {
 	for line := range c.events {
 		var evt Event
-		err := json.Unmarshal([]byte(line), &evt)
+		err := json.Unmarshal(line, &evt)
 		if err != nil {
 			println(err.Error())
 			continue
@@ -116,19 +103,30 @@ func (c *RPCClient) processReadLoop() {
 	}
 }
 
-type RPCRequest struct {
+type rpcRequest struct {
 	Method string        `json:"method"`
 	ID     int           `json:"id"`
 	Params []interface{} `json:"params,omitempty"`
 }
 
-func (c *RPCClient) call(name string, params []interface{}, result interface{}) (*RPCResponse, error) {
+type rpcError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+type rpcResponse struct {
+	ID     int             `json:"id"`
+	Error  rpcError        `json:"error,omitempty"`
+	Result json.RawMessage `json:"result"`
+}
+
+func (c *RPCClient) call(name string, params []interface{}, result interface{}) (*rpcResponse, error) {
 	c.methodMutex.Lock()
 	defer c.methodMutex.Unlock()
 
 	c.requestID++
 
-	req := RPCRequest{
+	req := rpcRequest{
 		Method: name,
 		ID:     c.requestID,
 		Params: params,
@@ -136,38 +134,37 @@ func (c *RPCClient) call(name string, params []interface{}, result interface{}) 
 
 	bytes, err := json.Marshal(&req)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "error marshalling request")
 	}
+
+	bytes = append(bytes, '\r', '\n')
 
 	_, err = c.writer.Write(bytes)
 	if err != nil {
-		return nil, err
-	}
-
-	_, err = c.writer.WriteString("\r\n")
-	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "error writing to connection")
 	}
 
 	err = c.writer.Flush()
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "error flushing write")
 	}
 
 	line := <-c.methodResponse
 
-	println(line)
+	var resp rpcResponse
 
-	var resp RPCResponse
-
-	err = json.Unmarshal([]byte(line), &resp)
+	err = json.Unmarshal(line, &resp)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "error unmarshalling response")
+	}
+
+	if resp.ID != req.ID {
+		return nil, errors.New("incorrect response received")
 	}
 
 	err = json.Unmarshal(resp.Result, result)
 
-	return &resp, err
+	return &resp, errors.Wrap(err, "error unmarshalling result")
 }
 
 // https://github.com/OpenPHDGuiding/phd2/wiki/EventMonitoring#available-methods
@@ -176,31 +173,19 @@ func (c *RPCClient) call(name string, params []interface{}, result interface{}) 
 func (c *RPCClient) GetExposure() (int, error) {
 	var result int
 	_, err := c.call("get_exposure", nil, &result)
-	if err != nil {
-		return 0, err
-	}
-
-	return result, nil
+	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
 func (c *RPCClient) CaptureSingleFrame(duration int, subframe []int) error {
 	var result int
 	_, err := c.call("capture_single_frame", []interface{}{duration, subframe}, &result)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
 func (c *RPCClient) ClearCalibration(which string) error {
 	var result int
 	_, err := c.call("clear_calibration", []interface{}{which}, &result)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
 type Settle struct {
@@ -212,81 +197,49 @@ type Settle struct {
 func (c *RPCClient) Dither(pixels float64, raOnly bool, settle Settle) error {
 	var result int
 	_, err := c.call("dither", []interface{}{pixels, raOnly, settle}, &result)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
 func (c *RPCClient) FindStar() ([]float64, error) {
 	var result []float64
 	_, err := c.call("find_star", nil, &result)
-	if err != nil {
-		return nil, err
-	}
-
-	return result, nil
+	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
 func (c *RPCClient) FlipCalibration() error {
 	var result int
 	_, err := c.call("flip_calibration", nil, &result)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
 func (c *RPCClient) GetAppState() (string, error) {
 	var result string
 	_, err := c.call("get_app_state", nil, &result)
-	if err != nil {
-		return "", err
-	}
-
-	return result, nil
+	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
 func (c *RPCClient) GetCalibrated() (bool, error) {
 	var result bool
 	_, err := c.call("get_calibrated", nil, &result)
-	if err != nil {
-		return false, err
-	}
-
-	return result, nil
+	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
 func (c *RPCClient) GetConnected() (bool, error) {
 	var result bool
 	_, err := c.call("get_connected", nil, &result)
-	if err != nil {
-		return false, err
-	}
-
-	return result, nil
+	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
 func (c *RPCClient) GetAlgorithmParamNames(axis string) ([]string, error) {
 	var result []string
 	_, err := c.call("get_algo_param_names", []interface{}{axis}, &result)
-	if err != nil {
-		return nil, err
-	}
-
-	return result, nil
+	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
 func (c *RPCClient) GetAlgorithmParam(axis, param string) (float64, error) {
 	var result float64
 	_, err := c.call("get_algo_param", []interface{}{axis, param}, &result)
-	if err != nil {
-		return 0, err
-	}
-
-	return result, nil
+	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
 type CalibrationData struct {
