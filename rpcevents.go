@@ -96,8 +96,8 @@ type AppState struct {
 // LockPositionSet is sent when the lock position has been established.
 type LockPositionSet struct {
 	Event
-	X int `json:"X"`
-	Y int `json:"Y"`
+	X float64 `json:"X"`
+	Y float64 `json:"Y"`
 }
 
 // Calibrating is sent on each calibration step.
