@@ -10,9 +10,7 @@ import (
 func ExampleSocketClient() {
 	c := phd2.NewSocketClient(&net.Dialer{})
 
-	var err error
-
-	err = c.Connect("127.0.0.1", 4300)
+	err := c.Connect("127.0.0.1", 4300)
 	if err != nil {
 		panic(err.Error())
 	}

@@ -234,15 +234,21 @@ func (c *RPCClient) call(name string, params []interface{}, result interface{}) 
 	return &resp, errors.Wrap(err, "error unmarshalling result")
 }
 
+// MountType represents the type equipment in use.
 type MountType string
 
 const (
-	MountTypeNone  = MountType("")
+	// MountTypeNone is used to not specify a mount type.
+	MountTypeNone = MountType("")
+	// MountTypeMount is a mount.
 	MountTypeMount = MountType("mount")
-	MountTypeAO    = MountType("ao")
-	MountTypeBoth  = MountType("both")
+	// MountTypeAO is for adaptive optics.
+	MountTypeAO = MountType("ao")
+	// MountTypeBoth is for both mount and adaptive optics.
+	MountTypeBoth = MountType("both")
 )
 
+// PascalCase returns the case expected by some RPC methods.
 func (mt MountType) PascalCase() string {
 	switch mt {
 	case MountTypeAO:
@@ -256,15 +262,21 @@ func (mt MountType) PascalCase() string {
 	return ""
 }
 
+// Axis represents the mount axis. RA/Dec for mount and X/Y for AO.
 type Axis string
 
 const (
-	AxisRA  = Axis("ra")
+	// AxisRA is right ascension.
+	AxisRA = Axis("ra")
+	// AxisDec is declination.
 	AxisDec = Axis("dec")
-	AxisX   = Axis("x")
-	AxisY   = Axis("y")
+	// AxisX is the AO X axis.
+	AxisX = Axis("x")
+	// AxisY is the AO Y axis.
+	AxisY = Axis("y")
 )
 
+// AppState is the the state of PHD2.
 type AppState string
 
 const (
@@ -285,12 +297,17 @@ const (
 	AppStateLooping = AppState("Looping")
 )
 
+// DecGuideMode represents a guide mode for the declination axis.
 type DecGuideMode string
 
 const (
-	DecGuideModeOff   = DecGuideMode("Off")
-	DecGuideModeAuto  = DecGuideMode("Auto")
+	// DecGuideModeOff is Off
+	DecGuideModeOff = DecGuideMode("Off")
+	// DecGuideModeAuto is Auto
+	DecGuideModeAuto = DecGuideMode("Auto")
+	// DecGuideModeNorth is North
 	DecGuideModeNorth = DecGuideMode("North")
+	// DecGuideModeSouth is South
 	DecGuideModeSouth = DecGuideMode("South")
 )
 
@@ -730,6 +747,7 @@ type Settle struct {
 	TimeoutSeconds int `json:"timeout"`
 }
 
+// CalibrationData represents the current calibration data.
 type CalibrationData struct {
 	Calibrated bool    `json:"calibrated"`
 	XAngle     float64 `json:"xAngle"`
@@ -740,6 +758,7 @@ type CalibrationData struct {
 	YParity    string  `json:"yParity"`
 }
 
+// CoolerStatus shows the current status of the sensor cooler.
 type CoolerStatus struct {
 	Temperature float64 `json:"temperature"`
 	CoolerOn    bool    `json:"coolerOn"`
@@ -747,11 +766,13 @@ type CoolerStatus struct {
 	Power       float64 `json:"power"`
 }
 
+// Equipment is info about a piece of equipment.
 type Equipment struct {
 	Name      string `json:"name"`
 	Connected bool   `json:"connected"`
 }
 
+// CurrentEquipment represents all the current equipment.
 type CurrentEquipment struct {
 	Camera   Equipment `json:"camera"`
 	Mount    Equipment `json:"mount"`
@@ -760,6 +781,7 @@ type CurrentEquipment struct {
 	Rotator  Equipment `json:"rotator"`
 }
 
+// LockShiftParams represents the current lock shift params.
 type LockShiftParams struct {
 	Enabled bool      `json:"enabled"`
 	Rate    []float64 `json:"rate"`
@@ -767,16 +789,19 @@ type LockShiftParams struct {
 	Axes    string    `json:"axes"`
 }
 
+// Profile is the id and name of a profile.
 type Profile struct {
 	ID   int    `json:"id"`
 	Name string `json:"name"`
 }
 
+// StarPosition is a current star position.
 type StarPosition struct {
 	X int `json:"X"`
 	Y int `json:"Y"`
 }
 
+// StarImage is returned by GetStarImage.
 type StarImage struct {
 	Frame   int          `json:"frame"`
 	Width   int          `json:"width"`
