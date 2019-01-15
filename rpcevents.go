@@ -2,54 +2,54 @@ package phd2
 
 // https://github.com/OpenPHDGuiding/phd2/wiki/EventMonitoring#event-notification-messages
 
-func getEvent(name string) (interface{}, bool) {
+func getEvent(name string) (interface{}, bool) { // nolint: gocyclo
 	switch name {
 	case "Version":
-		return &Version{}, true
+		return &VersionEvent{}, true
 	case "CalibrationComplete":
-		return &CalibrationComplete{}, true
+		return &CalibrationCompleteEvent{}, true
 	case "Paused":
-		return &Paused{}, true
+		return &PausedEvent{}, true
 	case "AppState":
-		return &AppState{}, true
+		return &AppStateEvent{}, true
 	case "LockPositionSet":
-		return &LockPositionSet{}, true
+		return &LockPositionSetEvent{}, true
 	case "Calibrating":
-		return &Calibrating{}, true
+		return &CalibratingEvent{}, true
 	case "StarSelected":
-		return &StarSelected{}, true
+		return &StarSelectedEvent{}, true
 	case "StartGuiding":
-		return &StartGuiding{}, true
+		return &StartGuidingEvent{}, true
 	case "StartCalibration":
-		return &StartCalibration{}, true
+		return &StartCalibrationEvent{}, true
 	case "CalibrationFailed":
-		return &CalibrationFailed{}, true
+		return &CalibrationFailedEvent{}, true
 	case "CalibrationDataFlipped":
-		return &CalibrationDataFlipped{}, true
+		return &CalibrationDataFlippedEvent{}, true
 	case "LoopingExposures":
-		return &LoopingExposures{}, true
+		return &LoopingExposuresEvent{}, true
 	case "LoopingExposuresStopped":
-		return &LoopingExposuresStopped{}, true
+		return &LoopingExposuresStoppedEvent{}, true
 	case "SettleBegin":
-		return &SettleBegin{}, true
+		return &SettleBeginEvent{}, true
 	case "Settling":
-		return &Settling{}, true
+		return &SettlingEvent{}, true
 	case "SettleDone":
-		return &SettleDone{}, true
+		return &SettleDoneEvent{}, true
 	case "StarLost":
-		return &StarLost{}, true
+		return &StarLostEvent{}, true
 	case "GuidingStopped":
-		return &GuidingStopped{}, true
+		return &GuidingStoppedEvent{}, true
 	case "GuideStep":
-		return &GuideStep{}, true
+		return &GuideStepEvent{}, true
 	case "GuidingDithered":
-		return &GuidingDithered{}, true
+		return &GuidingDitheredEvent{}, true
 	case "LockPositionLost":
-		return &LockPositionLost{}, true
+		return &LockPositionLostEvent{}, true
 	case "Alert":
-		return &Alert{}, true
+		return &AlertEvent{}, true
 	case "GuideParamChange":
-		return &GuideParamChange{}, true
+		return &GuideParamChangeEvent{}, true
 	}
 
 	return nil, false
@@ -68,40 +68,40 @@ type Event struct {
 	Inst int `json:"Inst"`
 }
 
-// Version describes the PHD and message protocol versions.
-type Version struct {
+// VersionEvent describes the PHD and message protocol versions.
+type VersionEvent struct {
 	Event
 	PHDVersion string `json:"PHDVersion"`
 	PHDSubver  string `json:"PHDSubver"`
 	MsgVersion int    `json:"MsgVersion"`
 }
 
-// CalibrationComplete is sent when calibration is completed successfuly.
-type CalibrationComplete struct {
+// CalibrationCompleteEvent is sent when calibration is completed successfuly.
+type CalibrationCompleteEvent struct {
 	Event
 	Mount string `json:"Mount"`
 }
 
-// Paused is sent when guiding has been paused.
-type Paused struct {
+// PausedEvent is sent when guiding has been paused.
+type PausedEvent struct {
 	Event
 }
 
-// AppState is sent in the initial connection.
-type AppState struct {
+// AppStateEvent is sent in the initial connection.
+type AppStateEvent struct {
 	Event
 	State string `json:"State"`
 }
 
-// LockPositionSet is sent when the lock position has been established.
-type LockPositionSet struct {
+// LockPositionSetEvent is sent when the lock position has been established.
+type LockPositionSetEvent struct {
 	Event
 	X float64 `json:"X"`
 	Y float64 `json:"Y"`
 }
 
-// Calibrating is sent on each calibration step.
-type Calibrating struct {
+// CalibratingEvent is sent on each calibration step.
+type CalibratingEvent struct {
 	Event
 	Mount string `json:"Mount"`
 	Dir   string `json:"dir"`
@@ -113,55 +113,55 @@ type Calibrating struct {
 	State string `json:"State"`
 }
 
-// StarSelected is sent when a star is selected.
-type StarSelected struct {
+// StarSelectedEvent is sent when a star is selected.
+type StarSelectedEvent struct {
 	Event
 	X int `json:"X"`
 	Y int `json:"Y"`
 }
 
-// StartGuiding is sent when guiding begins.
-type StartGuiding struct {
+// StartGuidingEvent is sent when guiding begins.
+type StartGuidingEvent struct {
 	Event
 }
 
-// StartCalibration
-type StartCalibration struct {
+// StartCalibrationEvent is sent when calibration begins.
+type StartCalibrationEvent struct {
 	Event
 	Mount string `json:"Mount"`
 }
 
-// CalibrationFailed is sent when calibration fails.
-type CalibrationFailed struct {
+// CalibrationFailedEvent is sent when calibration fails.
+type CalibrationFailedEvent struct {
 	Event
 	Reason string `json:"Reason"`
 }
 
-// CalibrationDataFlipped is sent when calibration data is flipped.
-type CalibrationDataFlipped struct {
+// CalibrationDataFlippedEvent is sent when calibration data is flipped.
+type CalibrationDataFlippedEvent struct {
 	Event
 	Mount string `json:"Mount"`
 }
 
-// LoopingExposures is sent for each exposure frame while looping exposures.
-type LoopingExposures struct {
+// LoopingExposuresEvent is sent for each exposure frame while looping exposures.
+type LoopingExposuresEvent struct {
 	Event
 	Frame int `json:"Frame"`
 }
 
-// LoopingExposuresStopped is sent when looping exposures has stopped.
-type LoopingExposuresStopped struct {
+// LoopingExposuresStoppedEvent is sent when looping exposures has stopped.
+type LoopingExposuresStoppedEvent struct {
 	Event
 }
 
-// SettleBegin is sent when settling begins after a dither or guide operation.
-type SettleBegin struct {
+// SettleBeginEvent is sent when settling begins after a dither or guide operation.
+type SettleBeginEvent struct {
 	Event
 }
 
-// Settling is sent for each exposure frame after a dither or guide operation
+// SettlingEvent is sent for each exposure frame after a dither or guide operation
 // until guiding has settled.
-type Settling struct {
+type SettlingEvent struct {
 	Event
 	Distance   int     `json:"Distance"`
 	Time       float64 `json:"Time"`
@@ -169,11 +169,11 @@ type Settling struct {
 	StarLocked bool    `json:"StarLocked"`
 }
 
-// SettleDone is sent after a dither or guide operation indicating whether
+// SettleDoneEvent is sent after a dither or guide operation indicating whether
 // settling was achieved, or if the guider failed to settle before the time
 // limit was reached, or if some other error occurred preventing guide or
 // dither to complete and settle.
-type SettleDone struct {
+type SettleDoneEvent struct {
 	Event
 	Status        int    `json:"Status"`
 	Error         string `json:"Error"`
@@ -181,8 +181,8 @@ type SettleDone struct {
 	DroppedFrames int    `json:"DroppedFrames"`
 }
 
-// StarLost is sent when a frame has been dropped due to the star being lost.
-type StarLost struct {
+// StarLostEvent is sent when a frame has been dropped due to the star being lost.
+type StarLostEvent struct {
 	Event
 	Frame     int     `json:"Frame"`
 	Time      float64 `json:"Time"`
@@ -193,19 +193,19 @@ type StarLost struct {
 	Status    string  `json:"Status"`
 }
 
-// GuidingStopped is sent when guiding has stopped.
-type GuidingStopped struct {
+// GuidingStoppedEvent is sent when guiding has stopped.
+type GuidingStoppedEvent struct {
 	Event
 }
 
-// Resumed is sent when PHD2 has been resumed after having been paused.
-type Resumed struct {
+// ResumedEvent is sent when PHD2 has been resumed after having been paused.
+type ResumedEvent struct {
 	Event
 }
 
-// GuideStep corresponds to a line in the PHD Guide Log. The event is sent for
+// GuideStepEvent corresponds to a line in the PHD Guide Log. The event is sent for
 // each frame while guiding.
-type GuideStep struct {
+type GuideStepEvent struct {
 	Event
 	// Frame is the frame number; starts at 1 each time guiding starts.
 	Frame int `json:"Frame"`
@@ -231,27 +231,27 @@ type GuideStep struct {
 	ErrorCode        int     `json:"ErrorCode"`
 }
 
-// GuidingDithered is sent when the lock position has been dithered.
-type GuidingDithered struct {
+// GuidingDitheredEvent is sent when the lock position has been dithered.
+type GuidingDitheredEvent struct {
 	Event
 	DX int `json:"dx"`
 	DY int `json:"dy"`
 }
 
-// LockPositionLost is sent when the lock position has been lost.
-type LockPositionLost struct {
+// LockPositionLostEvent is sent when the lock position has been lost.
+type LockPositionLostEvent struct {
 	Event
 }
 
-// Alert is sent when an alert message was displayed in PHD2.
-type Alert struct {
+// AlertEvent is sent when an alert message was displayed in PHD2.
+type AlertEvent struct {
 	Event
 	Msg  string `json:"Msg"`
 	Type string `json:"Type"`
 }
 
-// GuideParamChange is sent when a guiding parameter has been changed.
-type GuideParamChange struct {
+// GuideParamChangeEvent is sent when a guiding parameter has been changed.
+type GuideParamChangeEvent struct {
 	Event
 	Name  string `json:"Name"`
 	Value string `json:"Value"`

@@ -7,6 +7,7 @@ import (
 	"image"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/pkg/errors"
 )
@@ -147,7 +148,7 @@ func (c *RPCClient) processEvent(line []byte) error {
 		return nil
 	}
 
-	err = json.Unmarshal([]byte(line), resp)
+	err = json.Unmarshal(line, resp)
 	if err != nil {
 		return errors.Wrap(err, "error unmarshalling event")
 	}
@@ -172,9 +173,13 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
+func (err rpcError) Error() string {
+	return fmt.Sprintf("rpcerror %d: %s", err.Code, err.Message)
+}
+
 type rpcResponse struct {
 	ID     int             `json:"id"`
-	Error  rpcError        `json:"error,omitempty"`
+	Error  *rpcError       `json:"error,omitempty"`
 	Result json.RawMessage `json:"result"`
 }
 
@@ -220,226 +225,300 @@ func (c *RPCClient) call(name string, params []interface{}, result interface{}) 
 		return nil, errors.New("incorrect response received")
 	}
 
+	if resp.Error != nil {
+		return nil, *resp.Error
+	}
+
 	err = json.Unmarshal(resp.Result, result)
 
 	return &resp, errors.Wrap(err, "error unmarshalling result")
 }
 
+type MountType string
+
+const (
+	MountTypeNone  = MountType("")
+	MountTypeMount = MountType("mount")
+	MountTypeAO    = MountType("ao")
+	MountTypeBoth  = MountType("both")
+)
+
+func (mt MountType) PascalCase() string {
+	switch mt {
+	case MountTypeAO:
+		return "AO"
+	case MountTypeBoth:
+		return "Both"
+	case MountTypeMount:
+		return "Mount"
+	}
+
+	return ""
+}
+
+type Axis string
+
+const (
+	AxisRA  = Axis("ra")
+	AxisDec = Axis("dec")
+	AxisX   = Axis("x")
+	AxisY   = Axis("y")
+)
+
+type AppState string
+
+const (
+	// AppStateStopped means PHD is idle.
+	AppStateStopped = AppState("Stopped")
+	// AppStateSelected means a star is selected but PHD is neither looping
+	// exposures, calibrating, or guiding.
+	AppStateSelected = AppState("Selected")
+	// AppStateCalibrating means PHD is calibrating.
+	AppStateCalibrating = AppState("Calibrating")
+	// AppStateGuiding means PHD is guiding.
+	AppStateGuiding = AppState("Guiding")
+	// AppStateLostLock means PHD is guiding, but the frame was dropped.
+	AppStateLostLock = AppState("LostLock")
+	// AppStatePaused means PHD is paused.
+	AppStatePaused = AppState("Paused")
+	// AppStateLooping means PHD is looping exposures.
+	AppStateLooping = AppState("Looping")
+)
+
+type DecGuideMode string
+
+const (
+	DecGuideModeOff   = DecGuideMode("Off")
+	DecGuideModeAuto  = DecGuideMode("Auto")
+	DecGuideModeNorth = DecGuideMode("North")
+	DecGuideModeSouth = DecGuideMode("South")
+)
+
 // https://github.com/OpenPHDGuiding/phd2/wiki/EventMonitoring#available-methods
 // https://github.com/OpenPHDGuiding/phd2/blob/master/event_server.cpp
 
-func (c *RPCClient) GetExposure() (int, error) {
+// CaptureSingleFrame captures a singe frame; guiding and looping must be stopped first.
+func (c *RPCClient) CaptureSingleFrame(duration time.Duration, subframe image.Rectangle) error {
 	var result int
-	_, err := c.call("get_exposure", nil, &result)
-	return result, errors.Wrap(err, "error calling jsonrpc method")
-}
-
-func (c *RPCClient) CaptureSingleFrame(duration int, subframe []int) error {
-	var result int
-	_, err := c.call("capture_single_frame", []interface{}{duration, subframe}, &result)
+	_, err := c.call("capture_single_frame", []interface{}{
+		int(duration / time.Millisecond),
+		[]int{subframe.Min.X, subframe.Min.Y, subframe.Size().X, subframe.Size().Y},
+	}, &result)
 	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
-func (c *RPCClient) ClearCalibration(which string) error {
+// ClearCalibration causes PHD2 to recalibrate next time guiding starts. If
+// parameter is MountTypeNone, will clear both mount and AO.
+func (c *RPCClient) ClearCalibration(which MountType) error {
 	var result int
-	_, err := c.call("clear_calibration", []interface{}{which}, &result)
+	var params []interface{}
+
+	if which != MountTypeNone {
+		params = append(params, string(which))
+	}
+
+	_, err := c.call("clear_calibration", params, &result)
 	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
-type Settle struct {
-	Pixels         float64 `json:"pixels"`
-	TimeSeconds    int     `json:"time"`
-	TimeoutSeconds int     `json:"timeout"`
-}
-
+// Dither allows the client to request a random shift of the lock position by
+// +/- pixels on each of the RA and Dec axes. If the raOnly parameter is true,
+// or if the Dither RA Only option is set in the Brain, the dither will only be
+// on the RA axis. The pixels parameter is multiplied by the Dither Scale value
+// in the Brain.
+//
+// Like the guide method, the dither method takes a Settle object parameter.
+// PHD will send Settling and SettleDone events to indicate when guiding has
+// stabilized after the dither.
 func (c *RPCClient) Dither(pixels float64, raOnly bool, settle Settle) error {
 	var result int
 	_, err := c.call("dither", []interface{}{pixels, raOnly, settle}, &result)
 	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// FindStar auto-selects a star.
 func (c *RPCClient) FindStar() ([]float64, error) {
 	var result []float64
 	_, err := c.call("find_star", nil, &result)
 	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// FlipCalibration flips the calibration data after a meridian flip.
 func (c *RPCClient) FlipCalibration() error {
 	var result int
 	_, err := c.call("flip_calibration", nil, &result)
 	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
-func (c *RPCClient) GetAppState() (string, error) {
-	var result string
+// GetAlgorithmParamNames returns an array of guide algorithm param names.
+func (c *RPCClient) GetAlgorithmParamNames(axis Axis) ([]string, error) {
+	var result []string
+	_, err := c.call("get_algo_param_names", []interface{}{
+		string(axis),
+	}, &result)
+	return result, errors.Wrap(err, "error calling jsonrpc method")
+}
+
+// GetAlgorithmParam returns the value of the named parameter.
+func (c *RPCClient) GetAlgorithmParam(axis Axis, param string) (float64, error) {
+	var result float64
+	_, err := c.call("get_algo_param", []interface{}{
+		string(axis),
+		param,
+	}, &result)
+	return result, errors.Wrap(err, "error calling jsonrpc method")
+}
+
+// GetAppState returns PHD's current state.
+func (c *RPCClient) GetAppState() (AppState, error) {
+	var result AppState
 	_, err := c.call("get_app_state", nil, &result)
 	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// GetCalibrated returns true if the current equipment is calibrated.
 func (c *RPCClient) GetCalibrated() (bool, error) {
 	var result bool
 	_, err := c.call("get_calibrated", nil, &result)
 	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// GetCalibrationData returns the current calibration data.
+func (c *RPCClient) GetCalibrationData(which MountType) (CalibrationData, error) {
+	var result CalibrationData
+	_, err := c.call("get_calibration_data", []interface{}{
+		which.PascalCase(),
+	}, &result)
+	return result, errors.Wrap(err, "error calling jsonrpc method")
+}
+
+// GetConnected returns true if all the equipment is connected.
 func (c *RPCClient) GetConnected() (bool, error) {
 	var result bool
 	_, err := c.call("get_connected", nil, &result)
 	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
-func (c *RPCClient) GetAlgorithmParamNames(axis string) ([]string, error) {
-	var result []string
-	_, err := c.call("get_algo_param_names", []interface{}{axis}, &result)
-	return result, errors.Wrap(err, "error calling jsonrpc method")
-}
-
-func (c *RPCClient) GetAlgorithmParam(axis, param string) (float64, error) {
-	var result float64
-	_, err := c.call("get_algo_param", []interface{}{axis, param}, &result)
-	return result, errors.Wrap(err, "error calling jsonrpc method")
-}
-
-type CalibrationData struct {
-	Calibrated bool    `json:"calibrated"`
-	XAngle     float64 `json:"xAngle"`
-	XRate      float64 `json:"xRate"`
-	XParity    string  `json:"xParity"`
-	YAngle     float64 `json:"yAngle"`
-	YRate      float64 `json:"yRate"`
-	YParity    string  `json:"yParity"`
-}
-
-func (c *RPCClient) GetCalibrationData(which string) (CalibrationData, error) {
-	var result CalibrationData
-	_, err := c.call("get_calibration_data", []interface{}{which}, &result)
-	return result, errors.Wrap(err, "error calling jsonrpc method")
-}
-
-type CoolerStatus struct {
-	Temperature float64 `json:"temperature"`
-	CoolerOn    bool    `json:"coolerOn"`
-	Setpoint    float64 `json:"setpoint"`
-	Power       float64 `json:"power"`
-}
-
+// GetCoolerStatus returns current information about the camera's cooler.
 func (c *RPCClient) GetCoolerStatus() (CoolerStatus, error) {
 	var result CoolerStatus
 	_, err := c.call("get_cooler_status", nil, &result)
 	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
-type Equipment struct {
-	Name      string `json:"name"`
-	Connected bool   `json:"connected"`
-}
-
-type CurrentEquipment struct {
-	Camera   Equipment `json:"camera"`
-	Mount    Equipment `json:"mount"`
-	AuxMount Equipment `json:"aux_mount"`
-	AO       Equipment `json:"AO"`
-	Rotator  Equipment `json:"rotator"`
-}
-
+// GetCurrentEquipment returns info on the current equipment.
 func (c *RPCClient) GetCurrentEquipment() (CurrentEquipment, error) {
 	var result CurrentEquipment
 	_, err := c.call("get_current_equipment", nil, &result)
 	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
-func (c *RPCClient) GetDecGuidMode() (string, error) {
-	var result string
+// GetDecGuideMode returns the current Dec guide mode.
+func (c *RPCClient) GetDecGuideMode() (DecGuideMode, error) {
+	var result DecGuideMode
 	_, err := c.call("get_dec_guide_mode", nil, &result)
 	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
-func (c *RPCClient) GetExposureDurations() ([]int, error) {
+// GetExposure returns the current exposure time.
+func (c *RPCClient) GetExposure() (time.Duration, error) {
+	var result int
+	_, err := c.call("get_exposure", nil, &result)
+	return time.Duration(result) * time.Millisecond, errors.Wrap(err, "error calling jsonrpc method")
+}
+
+// GetExposureDurations returns the list of valid exposure times.
+func (c *RPCClient) GetExposureDurations() ([]time.Duration, error) {
 	var result []int
 	_, err := c.call("get_exposure_durations", nil, &result)
-	return result, errors.Wrap(err, "error calling jsonrpc method")
+
+	returnValue := make([]time.Duration, len(result))
+
+	for i, d := range result {
+		returnValue[i] = time.Duration(d) * time.Millisecond
+	}
+
+	return returnValue, errors.Wrap(err, "error calling jsonrpc method")
 }
 
-func (c *RPCClient) GetLockPosition() ([]int, error) {
+// GetLockPosition returns the current lock position, or nil if the lock
+// position is not set.
+func (c *RPCClient) GetLockPosition() (*image.Point, error) {
 	var result []int
 	_, err := c.call("get_lock_position", nil, &result)
-	return result, errors.Wrap(err, "error calling jsonrpc method")
+
+	var pt *image.Point
+
+	if len(result) == 2 {
+		pt = &image.Point{
+			X: result[0],
+			Y: result[1],
+		}
+	}
+
+	return pt, errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// GetLockShiftEnabled returns true if lock shift is enabled.
 func (c *RPCClient) GetLockShiftEnabled() (bool, error) {
 	var result bool
 	_, err := c.call("get_lock_shift_enabled", nil, &result)
 	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
-type LockShiftParams struct {
-	Enabled bool      `json:"enabled"`
-	Rate    []float64 `json:"rate"`
-	Units   string    `json:"units"`
-	Axes    string    `json:"axes"`
-}
-
+// GetLockShiftParams returns the current lock shift parameters.
 func (c *RPCClient) GetLockShiftParams() (LockShiftParams, error) {
 	var result LockShiftParams
 	_, err := c.call("get_lock_shift_params", nil, &result)
 	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// GetPaused returns true if PHD2 is paused.
 func (c *RPCClient) GetPaused() (bool, error) {
 	var result bool
 	_, err := c.call("get_paused", nil, &result)
 	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// GetPixelScale returns the guider image scale in arc-sec/pixel.
 func (c *RPCClient) GetPixelScale() (float64, error) {
 	var result float64
 	_, err := c.call("get_pixel_scale", nil, &result)
 	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
-type Profile struct {
-	ID   int    `json:"id"`
-	Name string `json:"name"`
-}
-
+// GetProfile returns the active profile.
 func (c *RPCClient) GetProfile() (Profile, error) {
 	var result Profile
 	_, err := c.call("get_profile", nil, &result)
 	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// GetProfiles returns the list of all profiles defined in PHD2.
 func (c *RPCClient) GetProfiles() ([]Profile, error) {
 	var result []Profile
 	_, err := c.call("get_profiles", nil, &result)
 	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// GetSearchRegion returns the search region radius.
 func (c *RPCClient) GetSearchRegion() (int, error) {
 	var result int
 	_, err := c.call("get_search_region", nil, &result)
 	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// GetSensorTemperature returns the camera sensor temperature in degrees C.
 func (c *RPCClient) GetSensorTemperature() (float64, error) {
 	var result float64
 	_, err := c.call("get_sensor_temperature", nil, &result)
 	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
-type StarPosition struct {
-	X int `json:"X"`
-	Y int `json:"Y"`
-}
-
-type StarImage struct {
-	Frame   int          `json:"frame"`
-	Width   int          `json:"width"`
-	Height  int          `json:"height"`
-	StarPos StarPosition `json:"star_pos"`
-	Pixels  string       `json:"pixels"`
-	Image   image.Image
-}
-
+// GetStarImage gets the current star image. An error is returned if a star is
+// not currently selected. The size parameter, if given, must be >= 15. The
+// actual image size returned may be smaller than the requested image size (but
+// will never be larger). The default image size is 15 pixels.
 func (c *RPCClient) GetStarImage(maxSize int) (StarImage, error) {
 	var result StarImage
 
@@ -467,30 +546,70 @@ func (c *RPCClient) GetStarImage(maxSize int) (StarImage, error) {
 	*/
 }
 
+// GetUseSubframes returns true if subframes are in use.
 func (c *RPCClient) GetUseSubframes() (bool, error) {
 	var result bool
 	_, err := c.call("get_use_subframes", nil, &result)
 	return result, errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// Guide allows a client to request PHD2 to do whatever it needs to start
+// guiding and to report when guiding is settled and stable.
+//
+// When the guide method command is received, PHD2 will respond immediately
+// indicating that the guide sequence has started. The guide method will return
+// an error status if equipment is not connected. PHD will then:
+//
+//   * start capturing if necessary
+//   * auto-select a guide star if one is not already selected
+//   * calibrate if necessary, or if the recalibrate parameter is true
+//   * wait for calibration to complete
+//   * start guiding if necessary
+//   * wait for settle (or timeout)
+//   * report progress of settling for each exposure (send Settling events)
+//   * report success or failure by sending a SettleDone event
+//
+// If the guide command is accepted, PHD is guaranteed to send a SettleDone
+// event some time later indicating the success or failure of the guide
+// sequence.
 func (c *RPCClient) Guide(settle Settle, recalibrate bool) error {
 	var result int
 	_, err := c.call("guide", []interface{}{settle, recalibrate}, &result)
 	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
-func (c *RPCClient) GuidePulse(amount int, direction, which string) error {
+// GuidePulseMount sends a guide pulse to the mount.
+func (c *RPCClient) GuidePulseMount(amount time.Duration, direction string) error {
 	var result int
-	_, err := c.call("guide_pulse", []interface{}{amount, direction, which}, &result)
+	_, err := c.call("guide_pulse", []interface{}{
+		int(amount / time.Millisecond),
+		direction,
+		MountTypeMount.PascalCase(),
+	}, &result)
 	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// GuidePulseAO sends a guide pulse to the mount.
+func (c *RPCClient) GuidePulseAO(steps int, direction string) error {
+	var result int
+	_, err := c.call("guide_pulse", []interface{}{
+		steps,
+		direction,
+		MountTypeAO.PascalCase(),
+	}, &result)
+	return errors.Wrap(err, "error calling jsonrpc method")
+}
+
+// Loop will start capturing, or, if guiding, stop guiding but continue
+// capturing.
 func (c *RPCClient) Loop() error {
 	var result int
 	_, err := c.call("loop", nil, &result)
 	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// SaveImage will save the current image. The client should remove the file
+// when done with it.
 func (c *RPCClient) SaveImage() (string, error) {
 	var result struct {
 		Filename string `json:"filename"`
@@ -499,48 +618,70 @@ func (c *RPCClient) SaveImage() (string, error) {
 	return result.Filename, errors.Wrap(err, "error calling jsonrpc method")
 }
 
-func (c *RPCClient) SetAlgorithmParam(axis, name string, value float64) error {
+// SetAlgorithmParam will set a guide algorithm parameter on an axis.
+func (c *RPCClient) SetAlgorithmParam(axis Axis, name string, value float64) error {
 	var result int
-	_, err := c.call("set_algo_param", []interface{}{axis, name, value}, &result)
+	_, err := c.call("set_algo_param", []interface{}{
+		string(axis),
+		name,
+		value,
+	}, &result)
 	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// SetConnected will connect or disconnect all equipment.
 func (c *RPCClient) SetConnected(connect bool) error {
 	var result int
 	_, err := c.call("set_connected", []interface{}{connect}, &result)
 	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
-func (c *RPCClient) SetDecGuideMode(mode string) error {
+// SetDecGuideMode will set the Dec guide mode.
+func (c *RPCClient) SetDecGuideMode(mode DecGuideMode) error {
 	var result int
-	_, err := c.call("set_dec_guide_mode", []interface{}{mode}, &result)
+	_, err := c.call("set_dec_guide_mode", []interface{}{
+		string(mode),
+	}, &result)
 	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
-func (c *RPCClient) SetExposure(length int) error {
+// SetExposure sets the exposure length.
+func (c *RPCClient) SetExposure(length time.Duration) error {
 	var result int
-	_, err := c.call("set_exposure", []interface{}{length}, &result)
+	_, err := c.call("set_exposure", []interface{}{
+		int(length / time.Millisecond),
+	}, &result)
 	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// SetLockPosition sets the lock position. When exact is true, the lock
+// position is moved to the exact given coordinates. When false, the current
+// position is moved to the given coordinates and if a guide star is in range,
+// the lock position is set to the coordinates of the guide star.
 func (c *RPCClient) SetLockPosition(x, y float64, exact bool) error {
 	var result int
 	_, err := c.call("set_lock_position", []interface{}{x, y, exact}, &result)
 	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// SetLockShiftEnabled enables or disables lock shift.
 func (c *RPCClient) SetLockShiftEnabled(enable bool) error {
 	var result int
 	_, err := c.call("set_lock_shift_enabled", []interface{}{enable}, &result)
 	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// SetLockShiftParams sets the lock shift parameters.
 func (c *RPCClient) SetLockShiftParams(params LockShiftParams) error {
 	var result int
 	_, err := c.call("set_lock_shift_params", []interface{}{params}, &result)
 	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// SetPaused will pause or unpause PHD2. When setting paused to true, a second
+// parameter with value "full" can be provided to fully pause phd, including
+// pausing looping exposures. Otherwise, exposures continue to loop, and only
+// guide output is paused.
 func (c *RPCClient) SetPaused(paused, full bool) error {
 	var result int
 
@@ -553,20 +694,94 @@ func (c *RPCClient) SetPaused(paused, full bool) error {
 	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// SetProfile selects an equipment profile. All equipment must be disconnected
+// before switching profiles.
 func (c *RPCClient) SetProfile(id int) error {
 	var result int
 	_, err := c.call("set_profile", []interface{}{id}, &result)
 	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// Shutdown will close PHD2.
 func (c *RPCClient) Shutdown() error {
 	var result int
 	_, err := c.call("shutdown", nil, &result)
 	return errors.Wrap(err, "error calling jsonrpc method")
 }
 
+// StopCapture will stop capturing and guiding.
 func (c *RPCClient) StopCapture() error {
 	var result int
 	_, err := c.call("stop_capture", nil, &result)
 	return errors.Wrap(err, "error calling jsonrpc method")
+}
+
+// Settle is used by the guide and dither commands to specify when PHD2 should
+// consider guiding to be stable enough for imaging.
+type Settle struct {
+	// Pixels is the maximum guide distance for guiding to be considered stable
+	// or "in-range".
+	Pixels float64 `json:"pixels"`
+	// TimeSeconds is the minimum time to be in-range before considering
+	// guiding to be stable.
+	TimeSeconds int `json:"time"`
+	// TimeoutSeconds is the time limit before settling is considered to have
+	// failed.
+	TimeoutSeconds int `json:"timeout"`
+}
+
+type CalibrationData struct {
+	Calibrated bool    `json:"calibrated"`
+	XAngle     float64 `json:"xAngle"`
+	XRate      float64 `json:"xRate"`
+	XParity    string  `json:"xParity"`
+	YAngle     float64 `json:"yAngle"`
+	YRate      float64 `json:"yRate"`
+	YParity    string  `json:"yParity"`
+}
+
+type CoolerStatus struct {
+	Temperature float64 `json:"temperature"`
+	CoolerOn    bool    `json:"coolerOn"`
+	Setpoint    float64 `json:"setpoint"`
+	Power       float64 `json:"power"`
+}
+
+type Equipment struct {
+	Name      string `json:"name"`
+	Connected bool   `json:"connected"`
+}
+
+type CurrentEquipment struct {
+	Camera   Equipment `json:"camera"`
+	Mount    Equipment `json:"mount"`
+	AuxMount Equipment `json:"aux_mount"`
+	AO       Equipment `json:"AO"`
+	Rotator  Equipment `json:"rotator"`
+}
+
+type LockShiftParams struct {
+	Enabled bool      `json:"enabled"`
+	Rate    []float64 `json:"rate"`
+	Units   string    `json:"units"`
+	Axes    string    `json:"axes"`
+}
+
+type Profile struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+type StarPosition struct {
+	X int `json:"X"`
+	Y int `json:"Y"`
+}
+
+type StarImage struct {
+	Frame   int          `json:"frame"`
+	Width   int          `json:"width"`
+	Height  int          `json:"height"`
+	StarPos StarPosition `json:"star_pos"`
+	Pixels  string       `json:"pixels"`
+	Image   image.Image
 }
