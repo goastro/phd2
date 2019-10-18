@@ -1,3 +1,5 @@
+// +build integration
+
 package phd2_test
 
 import (
